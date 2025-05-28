@@ -4,7 +4,8 @@ const cors = require('cors');
 const authRoutes = require('./routes/auth.routes');
 const integrationRoutes = require('./routes/integrations.routes');
 const connectionRoutes = require('./routes/connections.routes');
-const chatbotRoutes = require('./routes/chatbots.routes'); // Added chatbot routes
+const chatbotRoutes = require('./routes/chatbots.routes');
+const workflowRoutes = require('./routes/workflows.routes'); // Added workflow routes
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || 3001;
@@ -17,7 +18,8 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/connections', connectionRoutes);
-app.use('/api/chatbots', chatbotRoutes); // Mounted chatbot routes
+app.use('/api/chatbots', chatbotRoutes);
+app.use('/api/workflows', workflowRoutes); // Mounted workflow routes
 
 app.get('/', (req, res) => {
   res.send('AutoFlow AI Backend is running!');
@@ -26,3 +28,8 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+
+// Export app for testing purposes
+if (process.env.NODE_ENV === 'test') {
+  module.exports = app;
+}
