@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: "postgresql://autoflow_user:autoflow_pass@db:5432/autoflowdb_mvp"
+      # JWT_SECRET and JWT_EXPIRES_IN will be sourced from the .env file copied by the Dockerfile
+      PORT: "3001"
+      # Ensure NODE_ENV is set if your app uses it (e.g., for conditional logging)
+      # NODE_ENV: development 
+    depends_on:
+      - db
+    volumes:
+      - ./backend:/usr/src/app
+      - /usr/src/app/node_modules # Anonymous volume to prevent local node_modules from overwriting container's
+
+  db:
+    image: postgres:13-alpine
+    environment:
+      POSTGRES_USER: autoflow_user
+      POSTGRES_PASSWORD: autoflow_pass
+      POSTGRES_DB: autoflowdb_mvp
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432" # Optional: map host port 5433 to container port 5432 for direct DB access
+
+volumes:
+  postgres_data: # Defines the named volume for data persistence

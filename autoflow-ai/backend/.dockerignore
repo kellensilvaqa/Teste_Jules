@@ -1,0 +1,8 @@
+node_modules
+.env
+Dockerfile
+# Add any other files or directories that should not be included in the Docker image
+# e.g., .git, .vscode, logs, etc.
+npm-debug.log
+*.log
+.DS_Store

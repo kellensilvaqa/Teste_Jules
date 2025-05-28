@@ -1,0 +1,445 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Core Models
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  name           String?
+  password       String
+  role           UserRole      @default(USER)
+  plan           BillingPlan   @default(FREE)
+  status         UserStatus    @default(ACTIVE) // e.g., ACTIVE, SUSPENDED, DEACTIVATED
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  lastLoginAt    DateTime?     // Added lastLoginAt
+  profile        UserProfile?
+  workspaces     Workspace[]   @relation("WorkspaceMembers")
+  ownedWorkspaces Workspace[]  @relation("WorkspaceOwners") // Explicitly define owned workspaces
+  assignedTasks  Task[]        @relation("AssignedTasks")
+  createdTasks   Task[]        @relation("CreatedTasks") // Tasks created by the user
+  sentMessages   Message[]     @relation("SentMessages")
+  notifications  Notification[]
+  activityLogs   ActivityLog[]
+  apikeys        APIKey[]
+  settings       Json? // User-specific settings (e.g., theme, notifications preferences)
+}
+
+model UserProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  avatarUrl String?
+  bio       String?
+  company   String?
+  location  String?
+  website   String?
+  social    Json? // Store social media links (e.g., { "linkedin": "...", "twitter": "..." })
+  updatedAt DateTime @updatedAt
+}
+
+model Workspace {
+  id            String        @id @default(cuid())
+  name          String
+  description   String?
+  ownerId       String // ID of the user who owns the workspace
+  owner         User          @relation("WorkspaceOwners", fields: [ownerId], references: [id])
+  members       User[]        @relation("WorkspaceMembers")
+  projects      Project[]
+  chatbots      Chatbot[]
+  integrations  Integration[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  settings      Json? // Workspace-specific settings
+}
+
+model Project {
+  id            String        @id @default(cuid())
+  name          String
+  description   String?
+  workspaceId   String
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id])
+  tasks         Task[]
+  versions      Version[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  status        ProjectStatus @default(ACTIVE) // e.g., ACTIVE, ARCHIVED, ON_HOLD
+  settings      Json? // Project-specific settings
+}
+
+model Task {
+  id            String        @id @default(cuid())
+  name          String
+  description   String?
+  status        TaskStatus    @default(PENDING)
+  priority      TaskPriority  @default(MEDIUM)
+  dueDate       DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  projectId     String
+  project       Project       @relation(fields: [projectId], references: [id])
+  creatorId     String // ID of the user who created the task
+  creator       User          @relation("CreatedTasks", fields: [creatorId], references: [id])
+  assigneeId    String?
+  assignee      User?         @relation("AssignedTasks", fields: [assigneeId], references: [id])
+  versions      VersionTask[]
+  dependencies  Task[]        @relation("TaskDependencies")
+  dependents    Task[]        @relation("TaskDependencies")
+  parentId      String?
+  parent        Task?         @relation("TaskSubTasks", fields: [parentId], references: [id])
+  subTasks      Task[]        @relation("TaskSubTasks")
+  tags          String[] // e.g., ["bug", "feature", "ui"]
+  estimatedTime Float? // Estimated time in hours or points
+  actualTime    Float? // Actual time spent
+  attachments   Json? // Store links or references to attachments
+}
+
+model Version {
+  id          String        @id @default(cuid())
+  version     Int
+  name        String?       // e.g., "v1.0", "Sprint 2 Release"
+  description String?
+  status      VersionStatus @default(IN_PROGRESS) // e.g., PLANNED, IN_PROGRESS, RELEASED, ARCHIVED
+  releaseDate DateTime?
+  createdAt   DateTime      @default(now())
+  projectId   String
+  project     Project       @relation(fields: [projectId], references: [id])
+  tasks       VersionTask[]
+}
+
+// Junction table for many-to-many relationship between Version and Task
+model VersionTask {
+  id        String   @id @default(cuid())
+  versionId String
+  version   Version  @relation(fields: [versionId], references: [id])
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id])
+  status    String // Status of the task in this specific version (e.g., "completed", "in-progress", "deferred")
+
+  @@unique([versionId, taskId])
+}
+
+// Chatbot / LLM Related Models
+model Chatbot {
+  id              String           @id @default(cuid())
+  name            String
+  description     String?
+  workspaceId     String
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id])
+  model           String // e.g., "gpt-3.5-turbo", "claude-2"
+  promptTemplate  String?
+  temperature     Float?           @default(0.7)
+  maxTokens       Int?             @default(256)
+  status          ChatbotStatus    @default(DRAFT) // e.g., DRAFT, PUBLISHED, ARCHIVED
+  conversations   Conversation[]
+  knowledgeBases  KnowledgeBase[]  @relation("ChatbotKnowledgeBases")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  settings        Json? // Chatbot-specific settings
+}
+
+model Conversation {
+  id          String    @id @default(cuid())
+  chatbotId   String
+  chatbot     Chatbot   @relation(fields: [chatbotId], references: [id])
+  userId      String?   // Optional if anonymous conversations are allowed
+  // user        User?     @relation(fields: [userId], references: [id]) // Relation to User if needed
+  session_id  String    @unique @default(cuid()) // For tracking conversation sessions
+  messages    Message[]
+  metadata    Json?     // e.g., source, tags
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  senderId       String // Can be user ID or "chatbot"
+  sender         User?        @relation("SentMessages", fields: [senderId], references: [id], onDelete: NoAction, onUpdate: NoAction) // Or a generic sender type if chatbot is not a user
+  content        String
+  type           MessageType  @default(TEXT) // e.g., TEXT, IMAGE_URL, FILE_REFERENCE
+  metadata       Json?        // e.g., timestamps, reactions, read status
+  createdAt      DateTime     @default(now())
+}
+
+model KnowledgeBase {
+  id            String    @id @default(cuid())
+  name          String
+  description   String?
+  type          KbType    @default(DOCUMENT) // e.g., DOCUMENT, WEBSITE, API
+  sourceUrl     String?   // URL for website or API endpoint
+  chatbots      Chatbot[] @relation("ChatbotKnowledgeBases")
+  documents     Document[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  status        KbStatus  @default(INDEXING) // e.g., INDEXING, READY, ERROR
+}
+
+model Document {
+  id              String        @id @default(cuid())
+  name            String
+  knowledgeBaseId String
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id])
+  contentHash     String?       @unique // To avoid duplicate content
+  filePath        String?       // Path to the stored document if applicable
+  fileType        String?       // e.g., "pdf", "txt", "md"
+  processedAt     DateTime?
+  status          DocStatus     @default(PENDING) // e.g., PENDING, PROCESSING, COMPLETED, FAILED
+  metadata        Json?         // e.g., source, author, pages
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+// Integration & Automation Models
+model Integration {
+  id            String             @id @default(cuid())
+  name          String
+  type          IntegrationType // e.g., GITHUB, SLACK, JIRA
+  workspaceId   String
+  workspace     Workspace          @relation(fields: [workspaceId], references: [id])
+  credentials   Json // Encrypted credentials or API keys
+  status        IntegrationStatus  @default(ACTIVE) // e.g., ACTIVE, INACTIVE, ERROR
+  lastSyncAt    DateTime?
+  syncFrequency String?            // e.g., "daily", "hourly", "every_15_min"
+  settings      Json? // Integration-specific settings
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+}
+
+model Workflow {
+  id             String          @id @default(cuid())
+  name           String
+  description    String?
+  trigger        WorkflowTrigger // How the workflow is started (e.g., MANUAL, WEBHOOK, SCHEDULE)
+  isEnabled      Boolean         @default(true)
+  workspaceId    String // Assuming workflows are workspace-specific
+  // workspace      Workspace       @relation(fields: [workspaceId], references: [id])
+  actions        Json // Define actions as a JSON array of steps
+  lastRunAt      DateTime?
+  nextRunAt      DateTime? // For scheduled workflows
+  executionCount Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+// Billing & Subscription Models (Simplified)
+model Subscription {
+  id            String      @id @default(cuid())
+  workspaceId   String      @unique // Assuming one subscription per workspace
+  // workspace     Workspace   @relation(fields: [workspaceId], references: [id])
+  plan          BillingPlan
+  startDate     DateTime
+  endDate       DateTime? // Nullable for ongoing subscriptions
+  status        SubStatus   @default(ACTIVE) // e.g., ACTIVE, CANCELED, PAST_DUE
+  stripeSubId   String?     @unique // Stripe subscription ID
+  stripeCustId  String?     // Stripe customer ID
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model Invoice {
+  id            String    @id @default(cuid())
+  subscriptionId String
+  // subscription  Subscription @relation(fields: [subscriptionId], references: [id])
+  amount        Float
+  currency      String    @default("USD")
+  status        InvStatus @default(DRAFT) // e.g., DRAFT, PAID, VOID, UNCOLLECTIBLE
+  dueDate       DateTime?
+  paidAt        DateTime?
+  invoicePdfUrl String?
+  createdAt     DateTime  @default(now())
+}
+
+// System & Utility Models
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      NotifType // e.g., TASK_ASSIGNED, COMMENT_MENTION, PROJECT_UPDATE
+  message   String
+  isRead    Boolean  @default(false)
+  link      String?  // Link to the relevant item (e.g., task, project)
+  createdAt DateTime @default(now())
+}
+
+model ActivityLog {
+  id        String    @id @default(cuid())
+  userId    String?   // Optional if system activity
+  user      User?     @relation(fields: [userId], references: [id])
+  action    String    // e.g., "USER_LOGIN", "TASK_CREATED", "PROJECT_DELETED"
+  details   Json?     // Additional details about the activity
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+}
+
+model APIKey {
+  id          String   @id @default(cuid())
+  key         String   @unique @default(cuid()) // The actual API key (hashed in DB)
+  name        String?  // User-friendly name for the key
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  permissions String[] // e.g., ["read:tasks", "write:projects"]
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Enums
+enum UserRole {
+  USER
+  ADMIN
+  OWNER // Workspace owner
+  GUEST
+}
+
+enum UserStatus {
+  ACTIVE
+  PENDING_VERIFICATION
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum BillingPlan {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+  BACKLOG
+  REVIEW
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum VersionStatus {
+  PLANNED
+  IN_PROGRESS
+  RELEASED
+  ARCHIVED
+}
+
+enum ChatbotStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  TRAINING
+  ERROR
+}
+
+enum MessageType {
+  TEXT
+  IMAGE_URL
+  FILE_REFERENCE
+  AUDIO_URL
+  VIDEO_URL
+}
+
+enum KbType {
+  DOCUMENT
+  WEBSITE
+  FAQ
+  API
+  DATABASE // For connecting to SQL/NoSQL DBs for RAG
+}
+
+enum KbStatus {
+  PENDING_UPLOAD
+  INDEXING
+  READY
+  ERROR
+  UPDATING
+}
+
+enum DocStatus {
+  PENDING
+  PROCESSING // e.g., chunking, embedding
+  COMPLETED
+  FAILED
+}
+
+enum IntegrationType {
+  GITHUB
+  GITLAB
+  JIRA
+  SLACK
+  TRELLO
+  ASANA
+  GOOGLE_DRIVE
+  ZAPIER
+  CUSTOM_WEBHOOK
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  PENDING_AUTH
+}
+
+enum WorkflowTrigger {
+  MANUAL
+  WEBHOOK
+  SCHEDULE
+  EVENT_TASK_CREATED // Example specific event
+  EVENT_PROJECT_STATUS_CHANGED
+}
+
+enum SubStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  TRIALING
+}
+
+enum InvStatus {
+  DRAFT
+  SENT
+  PAID
+  VOID
+  UNCOLLECTIBLE
+  OVERDUE
+}
+
+enum NotifType {
+  TASK_ASSIGNED
+  TASK_COMPLETED
+  TASK_DUE_SOON
+  COMMENT_MENTION
+  PROJECT_UPDATE
+  NEW_MESSAGE
+  SYSTEM_ALERT
+  BILLING_ISSUE
+}
